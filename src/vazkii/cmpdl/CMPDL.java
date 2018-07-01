@@ -19,6 +19,8 @@ import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -35,9 +37,14 @@ public final class CMPDL {
 
 	public static boolean downloading = false;
 
-	public static List<String> missingMods = null;
+	public static List<Manifest.FileData> missingMods = null;
 
-	public static void main(String[] args) {
+    private static List<CompletableFuture> tasks;
+
+    private static  Executor executor= new ThreadPoolExecutor(10, 10, 0L, TimeUnit.MILLISECONDS, new LinkedBlockingQueue());
+
+
+    public static void main(String[] args) {
 		if(args.length > 0) {
 			String url = args[0];
 			String version = "latest";
@@ -51,6 +58,14 @@ public final class CMPDL {
 		} else Interface.openInterface();
 	}
 
+	public static void stop(){
+	    if(null==tasks||tasks.size()==0){
+	        return;
+        }
+
+        tasks.forEach(t->t.cancel(true));
+
+    }
 	public static void downloadFromURL(String url, String version) throws Exception {
 		if(downloading)
 			return;
@@ -64,8 +79,8 @@ public final class CMPDL {
 			Interface.setStatus("Awaiting Further Input");
 			return;
 		}
-		
-		missingMods = new ArrayList<String>();
+
+		missingMods = new CopyOnWriteArrayList<>();
 		downloading = true;
 		log("~ Starting magical modpack download sequence ~");
 		log("Input URL: " + url);
@@ -96,7 +111,7 @@ public final class CMPDL {
 			String filename = matcher.group(1);
 			log("Modpack filename is " + filename);
 
-			File unzippedDir = setupModpackMetadata(filename, finalUrl);
+			File unzippedDir = setupModpackMetadata(filename, finalUrl,false);
 			Manifest manifest = getManifest(unzippedDir);
 			File outputDir = getOutputDir(filename);
 
@@ -124,14 +139,14 @@ public final class CMPDL {
 				log("WARNING: Some mods could not be downloaded. Either the specific versions were taken down from "
 						+ "public download on CurseForge, or there were errors in the download.");
 				log("The missing mods are the following:");
-				for(String mod : missingMods) 
+				for(Manifest.FileData mod : missingMods)
 					log(" - " + mod);
 				log("");
 				log("If these mods are crucial to the modpack functioning, try downloading the server version of the pack "
 						+ "and pulling them from there.");
 			}
 			missingMods = null;
-			
+
 			log("################################################################################################");
 
 			Interface.setStatus("Complete");
@@ -142,7 +157,7 @@ public final class CMPDL {
 		}
 	}
 
-	public static File setupModpackMetadata(String filename, String url) throws IOException, ZipException {
+        public static File setupModpackMetadata(final String filename,final String url,boolean forceDownload) throws IOException, ZipException {
 		Interface.setStatus("Setting up Metadata");
 
 		File homeDir = getTempDir();
@@ -159,19 +174,29 @@ public final class CMPDL {
 			zipName = zipName + ".zip";
 
 		String retPath = retDir.getAbsolutePath();
-		retDir.deleteOnExit();
+		if(forceDownload){
+            retDir.deleteOnExit();
+        }
 
 		log("Downloading zip file " + zipName);
 		Interface.setStatus("Downloading Modpack .zip");
 		File f = new File(retDir, zipName);
-		downloadFileFromURL(f, new URL(url));
+
+		if(!f.exists()){
+            downloadFileFromURL(f, new URL(url));
+        }
+
 
 		Interface.setStatus("Unzipping Modpack Download");
 		log("Unzipping file");
 		ZipFile zip = new ZipFile(f);
-		zip.extractAll(retPath);
+        try {
+            zip.extractAll(retPath);
+        } catch (ZipException e) {
+            setupModpackMetadata(filename,url,true);
+        }
 
-		log("Done unzipping");
+        log("Done unzipping");
 
 		return retDir;
 	}
@@ -212,11 +237,22 @@ public final class CMPDL {
 		if(!modsDir.exists())
 			modsDir.mkdir();
 
-		int left = total;
+		AtomicInteger left =new AtomicInteger(total);
+        tasks=new ArrayList<>(manifest.files.size());
 		for(Manifest.FileData f : manifest.files) {
-			left--;
-			downloadFile(f, modsDir, left, total);
+			CompletableFuture task= CompletableFuture.runAsync(()->{
+                try {
+                    downloadFile(f, modsDir, left, total);
+                } catch (IOException|URISyntaxException e) {
+                    missingMods.add(f);
+                }
+            },executor);
+            tasks.add(task);
 		}
+
+        CompletableFuture end=  CompletableFuture.allOf(tasks.toArray(new CompletableFuture[tasks.size()]));
+
+        end.join();
 
 		log("Mod downloads complete");
 
@@ -284,11 +320,10 @@ public final class CMPDL {
 		return outDir;
 	}
 
-	public static void downloadFile(Manifest.FileData file, File modsDir, int remaining, int total) throws IOException, URISyntaxException {
+	public static void downloadFile(Manifest.FileData file, File modsDir, 	AtomicInteger remaining , int total) throws IOException, URISyntaxException {
 		log("Downloading " + file);
-		Interface.setStatus("File: " + file + " (" + (total - remaining) + "/" + total + ")");
 		Interface.setStatus2("Acquiring Info");
-		
+
 		String baseUrl = "http://minecraft.curseforge.com/projects/" + file.projectID;
 		log("Project URL is " + baseUrl);
 
@@ -309,7 +344,7 @@ public final class CMPDL {
 
 		if(filename.endsWith("cookieTest=1")) {
 			log("Missing file! Skipping it");
-			missingMods.add(finalUrl);
+			missingMods.add(file);
 		}
 		else {
 			log("Downloading " + filename);
@@ -318,20 +353,23 @@ public final class CMPDL {
 			try {
 				if(filename.equals("download"))
 					throw new FileNotFoundException("Invalid filename");
-				
+
 				if(f.exists())
 					log("This file already exists. No need to download it");
-				else 
+				else
 					downloadFileFromURL(f, new URL(finalUrl));
+					int value= remaining.addAndGet(-1);
+				    Interface.setStatus("File: " + file + " (" + (total - value) + "/" + total + ")");
+
 				log("Downloaded! " + remaining + "/" + total + " remaining");
 			} catch(FileNotFoundException e) {
 				Interface.addLogLine("Error: " + e.getClass().toString() + ": " + e.getLocalizedMessage());
 				Interface.addLogLine("This mod will not be downloaded. If you need the file, you'll have to get it manually:");
 				Interface.addLogLine(finalUrl);
-				CMPDL.missingMods.add(finalUrl);
+				CMPDL.missingMods.add(file);
 			}
 		}
-		
+
 		log("");
 	}
 
@@ -347,7 +385,7 @@ public final class CMPDL {
 			String redirectLocation = connection.getHeaderField("Location");
 			if(redirectLocation == null)
 				break;
-			
+
 			// This gets parsed out later
 			redirectLocation = redirectLocation.replaceAll("\\%20", " ");
 
@@ -370,8 +408,27 @@ public final class CMPDL {
 			byte[] buff = new byte[4096];
 
 			int i;
-			while((i = instream.read(buff)) > 0)
-				outStream.write(buff, 0, i);
+            Thread currentThread=Thread.currentThread();
+			while((i = instream.read(buff)) > 0){
+                if(currentThread.isInterrupted()){
+                    try {
+                        instream.close();
+                    } catch (IOException e) {
+                      //  e.printStackTrace();
+                    }
+                    try {
+                        outStream.close();
+                    } catch (IOException e) {
+                      //  e.printStackTrace();
+                    }
+                    throw new IOException("thread is interrupted,so close the io");
+
+                }else{
+                    outStream.write(buff, 0, i);
+                }
+
+            }
+
 		}
 	}
 

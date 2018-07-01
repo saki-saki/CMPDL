@@ -69,12 +69,15 @@ public class Interface {
 	
 	@SuppressWarnings("deprecation")
 	public static void finishDownload(boolean killThread) {
-		if(operatorThread != null && operatorThread.isAlive() && killThread) {
-			operatorThread.interrupt();
-			operatorThread.stop();
-			operatorThread = null;
+		if(operatorThread != null) {
+			operatorThread.stopOp();
+			if(operatorThread.isAlive() && killThread) {
+				operatorThread.interrupt();
+				operatorThread.stop();
+				operatorThread = null;
+			}
 		}
-		
+
 		if(frame != null)
 			frame.downloadButton.setText("Download");
 		

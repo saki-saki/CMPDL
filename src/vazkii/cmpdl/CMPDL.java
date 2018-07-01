@@ -9,11 +9,7 @@ import java.io.FileReader;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.io.InputStream;
-import java.net.HttpURLConnection;
-import java.net.URI;
-import java.net.URISyntaxException;
-import java.net.URL;
-import java.net.URLDecoder;
+import java.net.*;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Paths;
@@ -28,8 +24,13 @@ import com.google.gson.Gson;
 
 import net.lingala.zip4j.core.ZipFile;
 import net.lingala.zip4j.exception.ZipException;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+
 
 public final class CMPDL {
+
+	public static Logger logger= LogManager.getLogger(CMPDL.class);
 
 	public static final Gson GSON_INSTANCE = new Gson();
 
@@ -71,20 +72,20 @@ public final class CMPDL {
 			return;
 
 		if(url.contains("feed-the-beast.com") && version.equals("latest")) {
-			log("WARNING: For modpacks hosted in the FTB site, you need to provide a version, \"latest\" will not work!");
-			log("To find the version number to insert in the Curse File ID field, click the latest file on the sidebar on the right of the modpack's page.");
-			log("The number you need to input is the number at the end of the URL.");
-			log("For example, if you wanted to download https://www.feed-the-beast.com/projects/ftb-presents-skyfactory-3/files/2390075");
-			log("Then you would use 2390075 as the Curse File ID. Do not change the Modpack URL. Change that and click Download again to continue.");
+            show("WARNING: For modpacks hosted in the FTB site, you need to provide a version, \"latest\" will not work!");
+            show("To find the version number to insert in the Curse File ID field, click the latest file on the sidebar on the right of the modpack's page.");
+            show("The number you need to input is the number at the end of the URL.");
+            show("For example, if you wanted to download https://www.feed-the-beast.com/projects/ftb-presents-skyfactory-3/files/2390075");
+            show("Then you would use 2390075 as the Curse File ID. Do not change the Modpack URL. Change that and click Download again to continue.");
 			Interface.setStatus("Awaiting Further Input");
 			return;
 		}
 
 		missingMods = new CopyOnWriteArrayList<>();
 		downloading = true;
-		log("~ Starting magical modpack download sequence ~");
-		log("Input URL: " + url);
-		log("Input Version: " + version);
+        show("~ Starting magical modpack download sequence ~");
+        show("Input URL: " + url);
+        show("Input Version: " + version);
 		Interface.setStatus("Starting up");
 
 		String packUrl = url;
@@ -125,29 +126,29 @@ public final class CMPDL {
 
 			Interface.finishDownload(false);
 
-			log("And we're done!");
-			log("Output Path: " + outputDir);
-			log("");
-			log("################################################################################################");
-			log("IMPORTANT NOTE: If you want to import this instance to MultiMC, you must install Forge manually");
-			log("The Forge version you need is " + manifest.getForgeVersion());
-			log("A later version will probably also work just as fine, but this is the version shipped with the pack");
-			log("This is also added to the instance notes");
+            show("And we're done!");
+            show("Output Path: " + outputDir);
+            show("");
+            show("################################################################################################");
+            show("IMPORTANT NOTE: If you want to import this instance to MultiMC, you must install Forge manually");
+            show("The Forge version you need is " + manifest.getForgeVersion());
+            show("A later version will probably also work just as fine, but this is the version shipped with the pack");
+            show("This is also added to the instance notes");
 
 			if(!missingMods.isEmpty()) {
-				log("");
-				log("WARNING: Some mods could not be downloaded. Either the specific versions were taken down from "
+                show("");
+                show("WARNING: Some mods could not be downloaded. Either the specific versions were taken down from "
 						+ "public download on CurseForge, or there were errors in the download.");
-				log("The missing mods are the following:");
+                show("The missing mods are the following:");
 				for(Manifest.FileData mod : missingMods)
 					log(" - " + mod);
-				log("");
-				log("If these mods are crucial to the modpack functioning, try downloading the server version of the pack "
+                show("");
+                show("If these mods are crucial to the modpack functioning, try downloading the server version of the pack "
 						+ "and pulling them from there.");
 			}
 			missingMods = null;
 
-			log("################################################################################################");
+            show("################################################################################################");
 
 			Interface.setStatus("Complete");
 
@@ -354,12 +355,19 @@ public final class CMPDL {
 				if(filename.equals("download"))
 					throw new FileNotFoundException("Invalid filename");
 
-				if(f.exists())
-					log("This file already exists. No need to download it");
-				else
-					downloadFileFromURL(f, new URL(finalUrl));
-					int value= remaining.addAndGet(-1);
-				    Interface.setStatus("File: " + file + " (" + (total - value) + "/" + total + ")");
+				if(f.exists()&&f.length()<1){
+                    show("This file already exists. but file size is 0. retry to download:\n--"+f+"\n--"+finalUrl);
+                    f.delete();
+                }
+
+                if(f.exists()){
+				    remaining.addAndGet(-1);
+                    log("This file already exists. No need to download it");
+                }else {
+                    downloadFileFromURL(f, new URL(finalUrl));
+                    int value= remaining.addAndGet(-1);
+                    Interface.setStatus("File: " + file + " (" + (total - value) + "/" + total + ")");
+                }
 
 				log("Downloaded! " + remaining + "/" + total + " remaining");
 			} catch(FileNotFoundException e) {
@@ -373,38 +381,40 @@ public final class CMPDL {
 		log("");
 	}
 
-	public static String getLocationHeader(String location) throws IOException, URISyntaxException {
-		URI uri = new URI(location);
-		HttpURLConnection connection = null;
-		String userAgent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Ubuntu Chromium/53.0.2785.143 Chrome/53.0.2785.143 Safari/537.36";
-		for(;;) {
-			URL url = uri.toURL();
-			connection = (HttpURLConnection) url.openConnection();
-			connection.setRequestProperty("User-Agent", userAgent);
-			connection.setInstanceFollowRedirects(false);
-			String redirectLocation = connection.getHeaderField("Location");
-			if(redirectLocation == null)
-				break;
+    public static String getLocationHeader(String location) throws IOException, URISyntaxException {
+        HttpURLConnection connection = null;
+        String userAgent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Ubuntu Chromium/53.0.2785.143 Chrome/53.0.2785.143 Safari/537.36";
+        for(;;) {
+            URL url =new URL(location);
+            connection = (HttpURLConnection) url.openConnection();
+            connection.setRequestProperty("User-Agent", userAgent);
+            connection.setInstanceFollowRedirects(false);
+            String redirectLocation = connection.getHeaderField("Location");
+            if(redirectLocation == null)
+                break;
+            if(redirectLocation.startsWith("/")){
+                url = new URL(url.getProtocol(),url.getHost(), redirectLocation);
+                location=url.toString();
+            }else{
+                location=redirectLocation;
+            }
 
-			// This gets parsed out later
-			redirectLocation = redirectLocation.replaceAll("\\%20", " ");
 
-			if(redirectLocation.startsWith("/"))
-				uri = new URI(uri.getScheme(), uri.getHost(), redirectLocation, uri.getFragment());
-			else {
-				url = new URL(redirectLocation);
-				uri = new URI(url.getProtocol(), url.getUserInfo(), url.getHost(), url.getPort(), url.getPath(), url.getQuery(), url.getRef());
-			}
-		}
+        }
 
-		return uri.toString();
-	}
+        return location;
+    }
 
-	public static void downloadFileFromURL(File f, URL url) throws IOException, FileNotFoundException {
+
+    public static void downloadFileFromURL(File f, URL url) throws IOException, FileNotFoundException {
 		if(!f.exists())
 			f.createNewFile();
 
-		try(InputStream instream = url.openStream(); FileOutputStream outStream = new FileOutputStream(f)) {
+        URLConnection connection=url.openConnection();
+        connection.setConnectTimeout(60*1000);
+        connection.setReadTimeout(60*1000);
+        connection.connect();
+		try(InputStream instream = connection.getInputStream(); FileOutputStream outStream = new FileOutputStream(f)) {
 			byte[] buff = new byte[4096];
 
 			int i;
@@ -433,9 +443,16 @@ public final class CMPDL {
 	}
 
 	public static void log(String s) {
-		Interface.addLogLine(s);
-		System.out.println(s);
+		logger.debug(s);
 	}
 
-	private CMPDL() {}
+    public static void show(String s) {
+        Interface.addLogLine(s);
+		logger.debug(s);
+    }
+
+	private CMPDL() {
+
+	}
+
 }

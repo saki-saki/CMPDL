@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Configuration status="debug">
+
+    <Properties>
+        <Property name="baseDir">logs</Property>
+    </Properties>
+
+    <Appenders>
+        <Console name="CONSOLE" target="SYSTEM_OUT">
+            <PatternLayout pattern="%-5level %d  %c %M()/%L - %m%n"/>
+        </Console>
+
+        <RollingFile name="RollingFile" fileName="${baseDir}/cmpdl-${date:yyyy-MM-HH-hh-mm-ss-SSS}.log"
+                     filePattern="${baseDir}/$${date:yyyy-MM}/cmpdl-%d{yyyy-MM-dd-HH}-%i.log.gz" ignoreExceptions="false">
+            <PatternLayout>
+                <Pattern>%-5level %d %c %M()/%L - %m%n</Pattern>
+            </PatternLayout>
+            <Policies>
+                <TimeBasedTriggeringPolicy/>
+                <SizeBasedTriggeringPolicy size="50 MB"/>
+            </Policies>
+        </RollingFile>
+
+
+        <Async name="ASYNC" includeLocation="true">
+            <AppenderRef ref="RollingFile"/>
+            <AppenderRef ref="CONSOLE"/>
+        </Async>
+
+
+    </Appenders>
+
+    <Loggers>
+
+        <logger name="vazkii.cmpdl" level="debug"
+                additivity="false">
+            <appender-ref ref="ASYNC"/>
+        </logger>
+
+        <Root level="error">
+            <AppenderRef ref="ASYNC"/>
+        </Root>
+    </Loggers>
+</Configuration>
